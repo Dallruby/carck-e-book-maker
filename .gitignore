@@ -1,0 +1,14 @@
+.gradle/
+build/
+app/build/
+android/.gradle/
+android/build/
+android/app/build/
+
+*.apk
+*.aab
+*.iml
+
+.DS_Store
+Thumbs.db
+
