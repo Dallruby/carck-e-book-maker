@@ -104,6 +104,7 @@ public class MainActivity extends Activity {
     private boolean bookmarkPickMode = false;
     private Uri currentUri;
     private String pendingBookmarkKey = "";
+    private int pendingScrollY = -1;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -672,7 +673,10 @@ public class MainActivity extends Activity {
         prevButton.setEnabled(currentPage > 0);
         nextButton.setEnabled(currentPage < pages.size() - 1);
         scrollView.post(() -> {
-            if (pendingBookmarkKey != null && !pendingBookmarkKey.isEmpty()) {
+            if (pendingScrollY >= 0) {
+                scrollView.scrollTo(0, Math.min(pendingScrollY, Math.max(0, pageContainer.getBottom())));
+                pendingScrollY = -1;
+            } else if (pendingBookmarkKey != null && !pendingBookmarkKey.isEmpty()) {
                 View target = findAnchorView(pendingBookmarkKey);
                 if (target != null) {
                     scrollView.scrollTo(0, Math.max(0, target.getTop() - dp(18)));
@@ -979,6 +983,7 @@ public class MainActivity extends Activity {
         sortBookmarks(activeItem.bookmarks);
         saveLibrary();
         Toast.makeText(this, bookmarkLabel(item) + " 저장", Toast.LENGTH_SHORT).show();
+        pendingScrollY = scrollView == null ? -1 : scrollView.getScrollY();
         renderPage();
     }
 
@@ -991,6 +996,7 @@ public class MainActivity extends Activity {
                 .setPositiveButton("삭제", (dialog, which) -> {
                     activeItem.bookmarks.remove(target);
                     saveLibrary();
+                    pendingScrollY = scrollView == null ? -1 : scrollView.getScrollY();
                     renderPage();
                 })
                 .setNegativeButton("취소", null)
