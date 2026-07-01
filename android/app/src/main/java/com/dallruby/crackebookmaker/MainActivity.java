@@ -16,6 +16,7 @@ import android.os.Bundle;
 import android.text.InputType;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
+import android.text.TextUtils;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.StyleSpan;
 import android.util.LruCache;
@@ -189,7 +190,7 @@ public class MainActivity extends Activity {
 
         addSection(body, "보관함", true);
         addSection(body, "채팅방 목록", false);
-        root.addView(promoBanner(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(86)));
+        root.addView(promoBanner(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(74)));
     }
 
     private void addDeleteBar(LinearLayout body) {
@@ -252,24 +253,14 @@ public class MainActivity extends Activity {
 
     private View promoBanner() {
         FrameLayout wrap = new FrameLayout(this);
-        wrap.setPadding(dp(10), dp(7), dp(10), dp(9));
+        wrap.setPadding(0, 0, 0, 0);
         wrap.setBackgroundColor(BG);
         wrap.setOnClickListener(v -> openPromoLink());
 
         ImageView banner = new ImageView(this);
         banner.setImageResource(getResources().getIdentifier("paedo_sib_banner", "drawable", getPackageName()));
-        banner.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        banner.setAdjustViewBounds(true);
-        banner.setBackground(rounded(PANEL, dp(12), RED_DARK, 1));
-        banner.setClipToOutline(true);
-        banner.setOutlineProvider(new ViewOutlineProvider() {
-            @Override
-            public void getOutline(View view, Outline outline) {
-                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(12));
-            }
-        });
-        FrameLayout.LayoutParams bannerLp = new FrameLayout.LayoutParams(contentMaxWidth(), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER);
-        wrap.addView(banner, bannerLp);
+        banner.setScaleType(ImageView.ScaleType.FIT_XY);
+        wrap.addView(banner, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         return wrap;
     }
 
@@ -334,8 +325,8 @@ public class MainActivity extends Activity {
         cardLp.setMargins(0, 0, 0, dp(10));
         card.setLayoutParams(cardLp);
 
-        ImageView thumb = thumbnailView(item, dp(74));
-        LinearLayout.LayoutParams thumbLp = new LinearLayout.LayoutParams(dp(74), dp(74));
+        ImageView thumb = thumbnailView(item, dp(100));
+        LinearLayout.LayoutParams thumbLp = new LinearLayout.LayoutParams(dp(100), dp(100));
         thumbLp.setMargins(0, dp(2), dp(12), 0);
         card.addView(thumb, thumbLp);
 
@@ -344,7 +335,8 @@ public class MainActivity extends Activity {
         card.addView(info, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
         TextView title = text(valueOr(item.displayTitle, item.title), 16, Color.WHITE, Typeface.BOLD);
-        title.setSingleLine(false);
+        title.setSingleLine(true);
+        title.setEllipsize(TextUtils.TruncateAt.END);
         info.addView(title);
 
         TextView meta = text(formatDate(item.addedAt) + " · " + valueOr(item.aiName, "AI"), 12, MUTED, Typeface.NORMAL);
