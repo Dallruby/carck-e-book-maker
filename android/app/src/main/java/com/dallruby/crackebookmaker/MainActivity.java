@@ -46,8 +46,10 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -83,12 +85,13 @@ public class MainActivity extends Activity {
     private Button nextButton;
     private Button pageJumpButton;
     private Button bookmarkButton;
-    private Button bookmarkListButton;
     private ScrollView scrollView;
     private FrameLayout readerFrame;
     private SharedPreferences prefs;
 
     private final ArrayList<LibraryItem> library = new ArrayList<>();
+    private final Set<String> deleteSelection = new HashSet<>();
+    private final ArrayList<ParagraphAnchor> renderedAnchors = new ArrayList<>();
     private ChatDocument document;
     private LibraryItem activeItem;
     private List<List<ChatBlock>> pages = new ArrayList<>();
@@ -96,7 +99,10 @@ public class MainActivity extends Activity {
     private String userName = "유저";
     private String aiName = "AI";
     private float textScale = 1.0f;
+    private boolean deleteMode = false;
+    private boolean lightTheme = false;
     private Uri currentUri;
+    private String pendingBookmarkKey = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -110,7 +116,11 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (activeItem != null) {
+        if (deleteMode) {
+            deleteMode = false;
+            deleteSelection.clear();
+            showHome();
+        } else if (activeItem != null) {
             activeItem = null;
             showHome();
         } else {
@@ -127,6 +137,7 @@ public class MainActivity extends Activity {
 
     private void showHome() {
         activeItem = null;
+        lightTheme = false;
         root.removeAllViews();
 
         ScrollView homeScroll = new ScrollView(this);
@@ -158,8 +169,34 @@ public class MainActivity extends Activity {
         helpLp.setMargins(dp(10), 0, 0, 0);
         buttons.addView(help, helpLp);
 
-        addSection(body, "보관함 미리보기", true);
+        if (deleteMode) {
+            addDeleteBar(body);
+        }
+
+        addSection(body, "보관함", true);
         addSection(body, "채팅방 목록", false);
+    }
+
+    private void addDeleteBar(LinearLayout body) {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(0, dp(14), 0, 0);
+        body.addView(bar);
+
+        Button delete = primaryButton(String.format(Locale.KOREA, "선택 삭제 %d", deleteSelection.size()));
+        delete.setOnClickListener(v -> deleteSelectedItems());
+        bar.addView(delete, new LinearLayout.LayoutParams(0, dp(44), 1));
+
+        Button cancel = secondaryButton("취소");
+        cancel.setOnClickListener(v -> {
+            deleteMode = false;
+            deleteSelection.clear();
+            showHome();
+        });
+        LinearLayout.LayoutParams cancelLp = new LinearLayout.LayoutParams(dp(86), dp(44));
+        cancelLp.setMargins(dp(8), 0, 0, 0);
+        bar.addView(cancel, cancelLp);
     }
 
     private View heroHome() {
@@ -229,7 +266,19 @@ public class MainActivity extends Activity {
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(14), dp(12), dp(14), dp(12));
         card.setBackground(rounded(PANEL, dp(12), archivedSection ? RED_DARK : Color.rgb(48, 45, 47), 1));
-        card.setOnClickListener(v -> openLibraryItem(item));
+        card.setOnClickListener(v -> {
+            if (deleteMode) {
+                toggleDeleteSelection(item);
+            } else {
+                openLibraryItem(item);
+            }
+        });
+        card.setOnLongClickListener(v -> {
+            deleteMode = true;
+            deleteSelection.add(item.id);
+            showHome();
+            return true;
+        });
 
         LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         cardLp.setMargins(0, 0, 0, dp(10));
@@ -246,6 +295,19 @@ public class MainActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         card.addView(row);
+
+        if (deleteMode) {
+            Button select = smallButton(deleteSelection.contains(item.id) ? "선택됨" : "선택");
+            select.setOnClickListener(v -> toggleDeleteSelection(item));
+            row.addView(select, new LinearLayout.LayoutParams(0, dp(38), 1));
+
+            Button deleteOne = smallButton("X");
+            deleteOne.setOnClickListener(v -> confirmDeleteItem(item));
+            LinearLayout.LayoutParams xLp = new LinearLayout.LayoutParams(dp(58), dp(38));
+            xLp.setMargins(dp(8), 0, 0, 0);
+            row.addView(deleteOne, xLp);
+            return card;
+        }
 
         Button read = smallButton("읽기");
         read.setOnClickListener(v -> openLibraryItem(item));
@@ -275,6 +337,53 @@ public class MainActivity extends Activity {
                 .setTitle("사용법")
                 .setMessage("1. 템퍼몽키에서 크랙 채팅을 md 파일로 저장합니다.\n2. 앱에서 채팅방 불러오기를 누릅니다.\n3. {user} 이름과 {char} 이름을 적고 읽기 시작합니다.\n4. 자주 볼 방은 보관함에 넣어두면 됩니다.")
                 .setPositiveButton("확인", null)
+                .show();
+    }
+
+    private void toggleDeleteSelection(LibraryItem item) {
+        if (deleteSelection.contains(item.id)) {
+            deleteSelection.remove(item.id);
+        } else {
+            deleteSelection.add(item.id);
+        }
+        showHome();
+    }
+
+    private void confirmDeleteItem(LibraryItem item) {
+        new AlertDialog.Builder(this)
+                .setTitle("채팅방 삭제")
+                .setMessage(valueOr(item.displayTitle, item.title) + "\n목록에서 삭제할까요?")
+                .setPositiveButton("삭제", (dialog, which) -> {
+                    library.remove(item);
+                    deleteSelection.remove(item.id);
+                    if (deleteSelection.isEmpty()) deleteMode = false;
+                    saveLibrary();
+                    showHome();
+                })
+                .setNegativeButton("취소", null)
+                .show();
+    }
+
+    private void deleteSelectedItems() {
+        if (deleteSelection.isEmpty()) {
+            Toast.makeText(this, "삭제할 채팅방을 선택해줘.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("선택 삭제")
+                .setMessage(String.format(Locale.KOREA, "%d개 채팅방을 목록에서 삭제할까요?", deleteSelection.size()))
+                .setPositiveButton("삭제", (dialog, which) -> {
+                    for (int i = library.size() - 1; i >= 0; i--) {
+                        if (deleteSelection.contains(library.get(i).id)) {
+                            library.remove(i);
+                        }
+                    }
+                    deleteSelection.clear();
+                    deleteMode = false;
+                    saveLibrary();
+                    showHome();
+                })
+                .setNegativeButton("취소", null)
                 .show();
     }
 
@@ -356,6 +465,7 @@ public class MainActivity extends Activity {
             activeItem = item;
             userName = valueOr(item.userName, "유저");
             aiName = valueOr(item.aiName, "AI");
+            lightTheme = item.lightTheme;
             currentPage = Math.max(0, Math.min(item.lastPage, Math.max(0, pages.size() - 1)));
             showReader();
         } catch (Exception e) {
@@ -368,7 +478,7 @@ public class MainActivity extends Activity {
 
         LinearLayout shell = new LinearLayout(this);
         shell.setOrientation(LinearLayout.VERTICAL);
-        shell.setBackgroundColor(BG);
+        shell.setBackgroundColor(themed(BG));
         root.addView(shell, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         shell.addView(readerHeader(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(132)));
@@ -417,29 +527,29 @@ public class MainActivity extends Activity {
         top.addView(back, new LinearLayout.LayoutParams(dp(82), dp(36)));
 
         bookmarkButton = ghostButton("북마크");
-        bookmarkButton.setOnClickListener(v -> addBookmarkForCurrentPage());
+        bookmarkButton.setOnClickListener(v -> showBookmarkDialog());
         LinearLayout.LayoutParams bmLp = new LinearLayout.LayoutParams(dp(82), dp(36));
         bmLp.setMargins(dp(8), 0, 0, 0);
         top.addView(bookmarkButton, bmLp);
 
-        bookmarkListButton = ghostButton("목록");
-        bookmarkListButton.setOnClickListener(v -> showBookmarkDialog());
-        LinearLayout.LayoutParams blLp = new LinearLayout.LayoutParams(dp(70), dp(36));
-        blLp.setMargins(dp(8), 0, 0, 0);
-        top.addView(bookmarkListButton, blLp);
+        View spacer = new View(this);
+        top.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
 
-        Button rename = ghostButton("이름");
-        rename.setOnClickListener(v -> showRenameDialog(activeItem, true));
-        LinearLayout.LayoutParams rnLp = new LinearLayout.LayoutParams(dp(70), dp(36));
-        rnLp.setMargins(dp(8), 0, 0, 0);
-        top.addView(rename, rnLp);
+        Button menu = ghostButton("⋮");
+        menu.setTextSize(20);
+        menu.setOnClickListener(v -> showChatMenu());
+        LinearLayout.LayoutParams menuLp = new LinearLayout.LayoutParams(dp(46), dp(36));
+        menuLp.setMargins(dp(8), 0, 0, 0);
+        top.addView(menu, menuLp);
 
         titleView = text(valueOr(activeItem == null ? null : activeItem.displayTitle, document.title), 17, Color.WHITE, Typeface.BOLD);
+        titleView.setTextColor(Color.WHITE);
         titleView.setSingleLine(false);
         titleView.setPadding(0, dp(7), 0, 0);
         overlay.addView(titleView);
 
         pageView = text("", 12, SOFT, Typeface.BOLD);
+        pageView.setTextColor(SOFT);
         overlay.addView(pageView);
 
         return heroWrap;
@@ -450,7 +560,7 @@ public class MainActivity extends Activity {
         controls.setOrientation(LinearLayout.HORIZONTAL);
         controls.setPadding(dp(10), dp(8), dp(10), dp(10));
         controls.setGravity(Gravity.CENTER_VERTICAL);
-        controls.setBackgroundColor(Color.rgb(19, 19, 20));
+        controls.setBackgroundColor(themed(Color.rgb(19, 19, 20)));
 
         prevButton = secondaryButton("이전");
         prevButton.setOnClickListener(v -> movePage(-1));
@@ -488,9 +598,16 @@ public class MainActivity extends Activity {
         floating.setOrientation(LinearLayout.VERTICAL);
         floating.setGravity(Gravity.CENTER);
 
+        Button mark = roundFloatButton("🔖");
+        mark.setTextSize(17);
+        mark.setOnClickListener(v -> addBookmarkForVisibleText());
+        floating.addView(mark, new LinearLayout.LayoutParams(dp(46), dp(46)));
+
         Button up = roundFloatButton("↑");
         up.setOnClickListener(v -> scrollView.smoothScrollTo(0, 0));
-        floating.addView(up, new LinearLayout.LayoutParams(dp(46), dp(46)));
+        LinearLayout.LayoutParams upLp = new LinearLayout.LayoutParams(dp(46), dp(46));
+        upLp.setMargins(0, dp(8), 0, 0);
+        floating.addView(up, upLp);
 
         Button down = roundFloatButton("↓");
         down.setOnClickListener(v -> scrollView.post(() -> scrollView.smoothScrollTo(0, pageContainer.getBottom())));
@@ -531,24 +648,37 @@ public class MainActivity extends Activity {
         String pageText = String.format(Locale.KOREA, "%d / %d 페이지", currentPage + 1, total);
         pageView.setText(pageText);
         pageJumpButton.setText(String.format(Locale.KOREA, "%d / %d", currentPage + 1, total));
-        bookmarkButton.setText(isBookmarked(currentPage) ? "저장됨" : "북마크");
-        bookmarkListButton.setText(String.format(Locale.KOREA, "목록 %d", activeItem == null ? 0 : activeItem.bookmarks.size()));
+        bookmarkButton.setText(String.format(Locale.KOREA, "북마크 %d", activeItem == null ? 0 : activeItem.bookmarks.size()));
+        renderedAnchors.clear();
 
         if (pages.isEmpty()) {
             pageContainer.addView(text("읽을 메시지가 없어요.", 16, TEXT, Typeface.NORMAL));
             return;
         }
 
-        for (ChatBlock block : pages.get(currentPage)) {
-            renderChatBlock(block);
+        List<ChatBlock> page = pages.get(currentPage);
+        for (int i = 0; i < page.size(); i++) {
+            renderChatBlock(page.get(i), i);
         }
 
         prevButton.setEnabled(currentPage > 0);
         nextButton.setEnabled(currentPage < pages.size() - 1);
-        scrollView.post(() -> scrollView.scrollTo(0, 0));
+        scrollView.post(() -> {
+            if (pendingBookmarkKey != null && !pendingBookmarkKey.isEmpty()) {
+                View target = findAnchorView(pendingBookmarkKey);
+                if (target != null) {
+                    scrollView.scrollTo(0, Math.max(0, target.getTop() - dp(18)));
+                } else {
+                    scrollView.scrollTo(0, 0);
+                }
+                pendingBookmarkKey = "";
+            } else {
+                scrollView.scrollTo(0, 0);
+            }
+        });
     }
 
-    private void renderChatBlock(ChatBlock block) {
+    private void renderChatBlock(ChatBlock block, int blockIndex) {
         if (block.role == Role.USER) {
             addDivider(dp(16), dp(10));
         }
@@ -557,24 +687,25 @@ public class MainActivity extends Activity {
         label.setPadding(0, dp(6), 0, dp(8));
         pageContainer.addView(label);
 
-        renderMarkdown(block.body, block.role);
+        renderMarkdown(block.body, block.role, blockIndex);
 
         if (block.role == Role.USER) {
             addDivider(dp(4), dp(16));
         }
     }
 
-    private void renderMarkdown(String body, Role role) {
+    private void renderMarkdown(String body, Role role, int blockIndex) {
         String[] lines = body.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
         ArrayList<String> paragraph = new ArrayList<>();
         boolean inCode = false;
         String codeLang = "";
         ArrayList<String> codeLines = new ArrayList<>();
+        int paragraphIndex = 0;
 
         for (String line : lines) {
             String trimmed = line.trim();
             if (trimmed.startsWith("```")) {
-                flushParagraph(paragraph, role);
+                if (flushParagraph(paragraph, role, blockIndex, paragraphIndex)) paragraphIndex++;
                 if (inCode) {
                     addCodeCard(codeLang, join(codeLines));
                     codeLines.clear();
@@ -594,47 +725,51 @@ public class MainActivity extends Activity {
 
             String imageUrl = extractImageUrl(trimmed);
             if (imageUrl != null) {
-                flushParagraph(paragraph, role);
+                if (flushParagraph(paragraph, role, blockIndex, paragraphIndex)) paragraphIndex++;
                 addImage(imageUrl);
                 continue;
             }
 
             if (trimmed.equals("---")) {
-                flushParagraph(paragraph, role);
+                if (flushParagraph(paragraph, role, blockIndex, paragraphIndex)) paragraphIndex++;
                 addDivider(dp(14), dp(14));
                 continue;
             }
 
             if (trimmed.startsWith(">")) {
-                flushParagraph(paragraph, role);
+                if (flushParagraph(paragraph, role, blockIndex, paragraphIndex)) paragraphIndex++;
                 addQuote(trimmed.replaceFirst("^>\\s?", ""));
                 continue;
             }
 
             if (trimmed.isEmpty()) {
-                flushParagraph(paragraph, role);
+                if (flushParagraph(paragraph, role, blockIndex, paragraphIndex)) paragraphIndex++;
             } else {
                 paragraph.add(line);
             }
         }
 
-        flushParagraph(paragraph, role);
+        flushParagraph(paragraph, role, blockIndex, paragraphIndex);
         if (inCode && !codeLines.isEmpty()) {
             addCodeCard(codeLang, join(codeLines));
         }
     }
 
-    private void flushParagraph(ArrayList<String> paragraph, Role role) {
-        if (paragraph.isEmpty()) return;
+    private boolean flushParagraph(ArrayList<String> paragraph, Role role, int blockIndex, int paragraphIndex) {
+        if (paragraph.isEmpty()) return false;
         String value = join(paragraph).trim();
         paragraph.clear();
-        if (value.isEmpty()) return;
+        if (value.isEmpty()) return false;
 
         TextView tv = text("", 16, role == Role.USER ? Color.WHITE : TEXT, role == Role.USER ? Typeface.BOLD : Typeface.NORMAL);
-        tv.setText(applyInlineMarkdown(value));
+        String key = bookmarkKey(currentPage, blockIndex, paragraphIndex, value);
+        boolean marked = hasBookmarkKey(key);
+        tv.setText(applyInlineMarkdown(marked ? "🔖 " + value : value));
         tv.setLineSpacing(dp(4), 1.05f);
         tv.setPadding(0, 0, 0, dp(14));
         pageContainer.addView(tv);
+        renderedAnchors.add(new ParagraphAnchor(key, currentPage, tv, previewText(value)));
+        return true;
     }
 
     private void addQuote(String quote) {
@@ -701,7 +836,7 @@ public class MainActivity extends Activity {
 
     private void addDivider(int top, int bottom) {
         View line = new View(this);
-        line.setBackgroundColor(LINE);
+        line.setBackgroundColor(themed(LINE));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1);
         lp.setMargins(0, top, 0, bottom);
         pageContainer.addView(line, lp);
@@ -782,17 +917,34 @@ public class MainActivity extends Activity {
                 .show();
     }
 
-    private void addBookmarkForCurrentPage() {
-        if (activeItem == null) return;
-        if (!activeItem.bookmarks.contains(currentPage)) {
-            activeItem.bookmarks.add(currentPage);
-            Collections.sort(activeItem.bookmarks);
-            saveLibrary();
-            Toast.makeText(this, String.format(Locale.KOREA, "%d페이지 북마크 저장", currentPage + 1), Toast.LENGTH_SHORT).show();
-        } else {
-            Toast.makeText(this, "이미 북마크된 페이지예요.", Toast.LENGTH_SHORT).show();
+    private void addBookmarkForVisibleText() {
+        if (activeItem == null || renderedAnchors.isEmpty()) return;
+        ParagraphAnchor anchor = firstVisibleAnchor();
+        if (anchor == null) anchor = renderedAnchors.get(0);
+        if (hasBookmarkKey(anchor.key)) {
+            Toast.makeText(this, "이미 북마크된 위치예요.", Toast.LENGTH_SHORT).show();
+            return;
         }
+        BookmarkItem item = new BookmarkItem();
+        item.page = anchor.page;
+        item.key = anchor.key;
+        item.preview = anchor.preview;
+        item.createdAt = System.currentTimeMillis();
+        activeItem.bookmarks.add(item);
+        sortBookmarks(activeItem.bookmarks);
+        saveLibrary();
+        Toast.makeText(this, bookmarkLabel(item) + " 저장", Toast.LENGTH_SHORT).show();
         renderPage();
+    }
+
+    private ParagraphAnchor firstVisibleAnchor() {
+        int scrollY = scrollView.getScrollY();
+        for (ParagraphAnchor anchor : renderedAnchors) {
+            if (anchor.view.getBottom() >= scrollY + dp(8)) {
+                return anchor;
+            }
+        }
+        return renderedAnchors.isEmpty() ? null : renderedAnchors.get(renderedAnchors.size() - 1);
     }
 
     private void showBookmarkDialog() {
@@ -800,19 +952,53 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "아직 북마크가 없어요.", Toast.LENGTH_SHORT).show();
             return;
         }
+        sortBookmarks(activeItem.bookmarks);
         String[] labels = new String[activeItem.bookmarks.size()];
         for (int i = 0; i < activeItem.bookmarks.size(); i++) {
-            labels[i] = String.format(Locale.KOREA, "%d페이지", activeItem.bookmarks.get(i) + 1);
+            BookmarkItem item = activeItem.bookmarks.get(i);
+            labels[i] = bookmarkLabel(item) + "  " + valueOr(item.preview, "북마크");
         }
         new AlertDialog.Builder(this)
                 .setTitle("북마크")
-                .setItems(labels, (dialog, which) -> goToPage(activeItem.bookmarks.get(which)))
+                .setItems(labels, (dialog, which) -> goToBookmark(activeItem.bookmarks.get(which)))
                 .setNegativeButton("닫기", null)
                 .show();
     }
 
-    private boolean isBookmarked(int page) {
-        return activeItem != null && activeItem.bookmarks.contains(page);
+    private void goToBookmark(BookmarkItem bookmark) {
+        pendingBookmarkKey = bookmark.key;
+        goToPage(bookmark.page);
+    }
+
+    private boolean hasBookmarkKey(String key) {
+        if (activeItem == null) return false;
+        for (BookmarkItem item : activeItem.bookmarks) {
+            if (item.key.equals(key)) return true;
+        }
+        return false;
+    }
+
+    private View findAnchorView(String key) {
+        for (ParagraphAnchor anchor : renderedAnchors) {
+            if (anchor.key.equals(key)) return anchor.view;
+        }
+        return null;
+    }
+
+    private String bookmarkLabel(BookmarkItem item) {
+        int count = 0;
+        for (BookmarkItem other : activeItem.bookmarks) {
+            if (other.page == item.page) count++;
+            if (other == item) break;
+        }
+        return String.format(Locale.KOREA, "페이지%d-%d", item.page + 1, Math.max(1, count));
+    }
+
+    private void sortBookmarks(ArrayList<BookmarkItem> bookmarks) {
+        Collections.sort(bookmarks, (a, b) -> {
+            if (a.page != b.page) return a.page - b.page;
+            return a.key.compareTo(b.key);
+        });
     }
 
     private void showRenameDialog(LibraryItem item, boolean fromReader) {
@@ -834,6 +1020,91 @@ public class MainActivity extends Activity {
                     } else {
                         showHome();
                     }
+                })
+                .setNegativeButton("취소", null)
+                .show();
+    }
+
+    private void showChatMenu() {
+        if (activeItem == null) return;
+        String archiveLabel = activeItem.archived ? "보관함에서 꺼내기" : "보관함 이동";
+        String themeLabel = lightTheme ? "다크모드로 변경" : "라이트모드로 변경";
+        String[] items = new String[]{
+                "채팅방 이름 변경",
+                "{user}/{char} 수정",
+                archiveLabel,
+                themeLabel,
+                "채팅방 삭제"
+        };
+        new AlertDialog.Builder(this)
+                .setTitle("채팅방 메뉴")
+                .setItems(items, (dialog, which) -> {
+                    if (which == 0) showRenameDialog(activeItem, true);
+                    if (which == 1) showSpeakerDialog();
+                    if (which == 2) toggleArchiveForActive();
+                    if (which == 3) toggleThemeForActive();
+                    if (which == 4) confirmDeleteActiveItem();
+                })
+                .show();
+    }
+
+    private void showSpeakerDialog() {
+        if (activeItem == null) return;
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(18), dp(8), dp(18), 0);
+
+        EditText user = dialogInput("{user} 이름");
+        user.setText(userName);
+        form.addView(user);
+
+        EditText ai = dialogInput("{char} 이름");
+        ai.setText(aiName);
+        LinearLayout.LayoutParams aiLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        aiLp.setMargins(0, dp(8), 0, 0);
+        form.addView(ai, aiLp);
+
+        new AlertDialog.Builder(this)
+                .setTitle("{user}/{char} 수정")
+                .setView(form)
+                .setPositiveButton("저장", (dialog, which) -> {
+                    userName = valueOr(user.getText().toString(), "유저");
+                    aiName = valueOr(ai.getText().toString(), "AI");
+                    activeItem.userName = userName;
+                    activeItem.aiName = aiName;
+                    saveLibrary();
+                    renderPage();
+                })
+                .setNegativeButton("취소", null)
+                .show();
+    }
+
+    private void toggleArchiveForActive() {
+        if (activeItem == null) return;
+        activeItem.archived = !activeItem.archived;
+        saveLibrary();
+        Toast.makeText(this, activeItem.archived ? "보관함으로 이동했어요." : "보관함에서 꺼냈어요.", Toast.LENGTH_SHORT).show();
+    }
+
+    private void toggleThemeForActive() {
+        if (activeItem == null) return;
+        lightTheme = !lightTheme;
+        activeItem.lightTheme = lightTheme;
+        saveLibrary();
+        showReader();
+    }
+
+    private void confirmDeleteActiveItem() {
+        if (activeItem == null) return;
+        LibraryItem target = activeItem;
+        new AlertDialog.Builder(this)
+                .setTitle("채팅방 삭제")
+                .setMessage(valueOr(target.displayTitle, target.title) + "\n목록에서 삭제하고 서재로 돌아갈까요?")
+                .setPositiveButton("삭제", (dialog, which) -> {
+                    library.remove(target);
+                    activeItem = null;
+                    saveLibrary();
+                    showHome();
                 })
                 .setNegativeButton("취소", null)
                 .show();
@@ -916,11 +1187,49 @@ public class MainActivity extends Activity {
         return sb.toString();
     }
 
+    private int themed(int color) {
+        if (!lightTheme) return color;
+        if (color == BG || color == Color.rgb(15, 15, 16) || color == Color.rgb(17, 17, 17) || color == Color.rgb(19, 19, 20)) {
+            return Color.rgb(250, 247, 248);
+        }
+        if (color == PANEL || color == Color.rgb(27, 27, 29) || color == Color.rgb(30, 30, 30) || color == Color.rgb(31, 31, 31)) {
+            return Color.rgb(255, 252, 253);
+        }
+        if (color == PANEL_2 || color == Color.rgb(36, 34, 36) || color == Color.rgb(42, 42, 46) || color == Color.rgb(43, 41, 45)) {
+            return Color.rgb(242, 235, 238);
+        }
+        if (color == CARD || color == Color.rgb(38, 37, 35) || color == Color.rgb(39, 38, 36)) {
+            return Color.rgb(244, 239, 236);
+        }
+        if (color == CARD_HEAD || color == Color.rgb(78, 76, 71)) {
+            return Color.rgb(223, 215, 211);
+        }
+        if (color == LINE || color == Color.rgb(56, 54, 55) || color == Color.rgb(48, 48, 48)) {
+            return Color.rgb(220, 211, 215);
+        }
+        if (color == TEXT || color == Color.WHITE || color == Color.rgb(232, 232, 232) || color == Color.rgb(230, 230, 230)) {
+            return Color.rgb(38, 34, 36);
+        }
+        if (color == MUTED || color == Color.rgb(166, 161, 164) || color == Color.rgb(161, 161, 161)) {
+            return Color.rgb(116, 102, 108);
+        }
+        if (color == SOFT || color == Color.rgb(210, 176, 182)) {
+            return Color.rgb(139, 61, 76);
+        }
+        if (color == EMPHASIS || color == Color.rgb(154, 154, 154)) {
+            return Color.rgb(112, 108, 110);
+        }
+        if (color == RED_DARK) {
+            return Color.rgb(255, 232, 236);
+        }
+        return color;
+    }
+
     private TextView text(String value, int sp, int color, int style) {
         TextView tv = new TextView(this);
         tv.setText(value);
         tv.setTextSize(sp * textScale);
-        tv.setTextColor(color);
+        tv.setTextColor(themed(color));
         tv.setTypeface(Typeface.DEFAULT, style);
         tv.setIncludeFontPadding(true);
         return tv;
@@ -985,9 +1294,9 @@ public class MainActivity extends Activity {
 
     private GradientDrawable rounded(int color, int radius, int strokeColor, int strokeWidth) {
         GradientDrawable g = new GradientDrawable();
-        g.setColor(color);
+        g.setColor(themed(color));
         g.setCornerRadius(radius);
-        if (strokeWidth > 0) g.setStroke(strokeWidth, strokeColor);
+        if (strokeWidth > 0) g.setStroke(strokeWidth, themed(strokeColor));
         return g;
     }
 
@@ -1021,6 +1330,16 @@ public class MainActivity extends Activity {
         return new SimpleDateFormat("yyyy.MM.dd HH:mm", Locale.KOREA).format(new Date(time));
     }
 
+    private String bookmarkKey(int page, int blockIndex, int paragraphIndex, String text) {
+        return page + ":" + blockIndex + ":" + paragraphIndex + ":" + previewText(text);
+    }
+
+    private String previewText(String text) {
+        String normalized = text == null ? "" : text.replaceAll("\\s+", " ").trim();
+        if (normalized.length() > 28) return normalized.substring(0, 28);
+        return normalized;
+    }
+
     private String extractImageUrl(String line) {
         Matcher m = Pattern.compile("^!\\[[^\\]]*\\]\\(([^)]+)\\)").matcher(line);
         if (m.find()) return m.group(1).trim();
@@ -1039,6 +1358,48 @@ public class MainActivity extends Activity {
         AI
     }
 
+    static class ParagraphAnchor {
+        final String key;
+        final int page;
+        final TextView view;
+        final String preview;
+
+        ParagraphAnchor(String key, int page, TextView view, String preview) {
+            this.key = key;
+            this.page = page;
+            this.view = view;
+            this.preview = preview;
+        }
+    }
+
+    static class BookmarkItem {
+        int page = 0;
+        String key = "";
+        String preview = "";
+        long createdAt = System.currentTimeMillis();
+
+        JSONObject toJson() {
+            JSONObject obj = new JSONObject();
+            try {
+                obj.put("page", page);
+                obj.put("key", key);
+                obj.put("preview", preview);
+                obj.put("createdAt", createdAt);
+            } catch (Exception ignored) {
+            }
+            return obj;
+        }
+
+        static BookmarkItem fromJson(JSONObject obj) {
+            BookmarkItem item = new BookmarkItem();
+            item.page = obj.optInt("page", 0);
+            item.key = obj.optString("key", "");
+            item.preview = obj.optString("preview", "");
+            item.createdAt = obj.optLong("createdAt", System.currentTimeMillis());
+            return item;
+        }
+    }
+
     static class LibraryItem {
         String id = "";
         String uri = "";
@@ -1049,7 +1410,8 @@ public class MainActivity extends Activity {
         long addedAt = System.currentTimeMillis();
         int lastPage = 0;
         boolean archived = false;
-        final ArrayList<Integer> bookmarks = new ArrayList<>();
+        boolean lightTheme = false;
+        final ArrayList<BookmarkItem> bookmarks = new ArrayList<>();
 
         JSONObject toJson() {
             JSONObject obj = new JSONObject();
@@ -1063,8 +1425,9 @@ public class MainActivity extends Activity {
                 obj.put("addedAt", addedAt);
                 obj.put("lastPage", lastPage);
                 obj.put("archived", archived);
+                obj.put("lightTheme", lightTheme);
                 JSONArray bms = new JSONArray();
-                for (Integer page : bookmarks) bms.put(page);
+                for (BookmarkItem bookmark : bookmarks) bms.put(bookmark.toJson());
                 obj.put("bookmarks", bms);
             } catch (Exception ignored) {
             }
@@ -1082,10 +1445,20 @@ public class MainActivity extends Activity {
             item.addedAt = obj.optLong("addedAt", System.currentTimeMillis());
             item.lastPage = obj.optInt("lastPage", 0);
             item.archived = obj.optBoolean("archived", false);
+            item.lightTheme = obj.optBoolean("lightTheme", false);
             JSONArray bms = obj.optJSONArray("bookmarks");
             if (bms != null) {
                 for (int i = 0; i < bms.length(); i++) {
-                    item.bookmarks.add(bms.optInt(i, 0));
+                    JSONObject bookmarkObj = bms.optJSONObject(i);
+                    if (bookmarkObj != null) {
+                        item.bookmarks.add(BookmarkItem.fromJson(bookmarkObj));
+                    } else {
+                        BookmarkItem old = new BookmarkItem();
+                        old.page = bms.optInt(i, 0);
+                        old.key = old.page + ":0:0:";
+                        old.preview = "이전 북마크";
+                        item.bookmarks.add(old);
+                    }
                 }
             }
             return item;
