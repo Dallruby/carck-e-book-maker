@@ -606,6 +606,7 @@ public class MainActivity extends Activity {
         Button mark = roundFloatButton("🔖");
         mark.setTextSize(17);
         mark.setOnClickListener(v -> {
+            pendingScrollY = scrollView == null ? -1 : scrollView.getScrollY();
             bookmarkPickMode = !bookmarkPickMode;
             Toast.makeText(this, bookmarkPickMode ? "북마크할 문단을 골라줘." : "북마크 선택 모드 종료", Toast.LENGTH_SHORT).show();
             renderPage();
