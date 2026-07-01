@@ -1,0 +1,47 @@
+name: Release Android APK
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Build debug APK
+        working-directory: android
+        run: gradle :app:assembleDebug
+
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk dallruby-crack-e-book-reader.apk
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Dallruby Crack E-book Reader ${{ github.ref_name }}
+          body: |
+            달루비 크랙 이북 리더 APK입니다.
+
+            다운로드한 APK를 실행해서 설치해주세요.
+            설치할 때 "알 수 없는 앱 설치 허용"이 필요할 수 있습니다.
+          files: dallruby-crack-e-book-reader.apk
