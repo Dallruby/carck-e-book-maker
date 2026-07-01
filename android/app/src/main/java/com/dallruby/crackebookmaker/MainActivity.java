@@ -404,7 +404,7 @@ public class MainActivity extends Activity {
             if (deleteMode) {
                 toggleDeleteSelection(item);
             } else {
-                pickThumbnail(item);
+                openLibraryItem(item);
             }
         });
         image.setOnLongClickListener(v -> {
@@ -431,7 +431,8 @@ public class MainActivity extends Activity {
                         + "자주 읽는 방은 보관 버튼이나 채팅방 메뉴에서 보관함으로 이동할 수 있어요.\n"
                         + "목록에서 길게 누르면 여러 채팅방을 선택해서 삭제할 수 있어요.");
         addHelpSection(list, "썸네일 바꾸기",
-                "서재 목록의 왼쪽 썸네일을 누르면 이미지를 바꿀 수 있어요.\n"
+                "서재 목록의 왼쪽 썸네일을 짧게 누르면 채팅방을 열어요.\n"
+                        + "썸네일을 꾹 누르고 있으면 이미지를 바꿀 수 있어요.\n"
                         + "이미지를 고른 뒤 확대, 축소, 상하좌우 버튼으로 정방형 크롭 위치를 맞추고 저장해요.\n"
                         + "채팅방 안의 점 3개 메뉴에서도 썸네일을 수정할 수 있어요.");
         addHelpSection(list, "읽기 화면",
