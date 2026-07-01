@@ -7,6 +7,7 @@ import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.graphics.Outline;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
@@ -21,6 +22,7 @@ import android.util.LruCache;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -36,6 +38,8 @@ import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -55,7 +59,9 @@ import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
     private static final int REQ_OPEN_MD = 4001;
+    private static final int REQ_PICK_THUMBNAIL = 4002;
     private static final String PREF_LIBRARY = "library_items_v2";
+    private static final String PROMO_URL = "https://share.crack.wrtn.ai/w65wwr";
 
     private static final int BG = Color.rgb(15, 15, 16);
     private static final int PANEL = Color.rgb(27, 27, 29);
@@ -105,6 +111,12 @@ public class MainActivity extends Activity {
     private Uri currentUri;
     private String pendingBookmarkKey = "";
     private int pendingScrollY = -1;
+    private LibraryItem pendingThumbnailItem;
+    private Bitmap cropSourceBitmap;
+    private ImageView cropPreview;
+    private int cropX = 0;
+    private int cropY = 0;
+    private int cropSize = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -145,16 +157,16 @@ public class MainActivity extends Activity {
         ScrollView homeScroll = new ScrollView(this);
         LinearLayout shell = new LinearLayout(this);
         shell.setOrientation(LinearLayout.VERTICAL);
-        shell.setPadding(0, 0, 0, dp(24));
+        shell.setPadding(0, 0, 0, dp(12));
         homeScroll.addView(shell);
-        root.addView(homeScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(homeScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
         shell.addView(heroHome(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(246)));
 
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(18), dp(18), dp(18), 0);
-        shell.addView(body);
+        shell.addView(body, centeredContentParams());
 
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
@@ -177,6 +189,7 @@ public class MainActivity extends Activity {
 
         addSection(body, "보관함", true);
         addSection(body, "채팅방 목록", false);
+        root.addView(promoBanner(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(86)));
     }
 
     private void addDeleteBar(LinearLayout body) {
@@ -237,6 +250,37 @@ public class MainActivity extends Activity {
         return heroWrap;
     }
 
+    private View promoBanner() {
+        FrameLayout wrap = new FrameLayout(this);
+        wrap.setPadding(dp(10), dp(7), dp(10), dp(9));
+        wrap.setBackgroundColor(BG);
+        wrap.setOnClickListener(v -> openPromoLink());
+
+        ImageView banner = new ImageView(this);
+        banner.setImageResource(getResources().getIdentifier("paedo_sib_banner", "drawable", getPackageName()));
+        banner.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        banner.setAdjustViewBounds(true);
+        banner.setBackground(rounded(PANEL, dp(12), RED_DARK, 1));
+        banner.setClipToOutline(true);
+        banner.setOutlineProvider(new ViewOutlineProvider() {
+            @Override
+            public void getOutline(View view, Outline outline) {
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(12));
+            }
+        });
+        FrameLayout.LayoutParams bannerLp = new FrameLayout.LayoutParams(contentMaxWidth(), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER);
+        wrap.addView(banner, bannerLp);
+        return wrap;
+    }
+
+    private void openPromoLink() {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(PROMO_URL)));
+        } catch (Exception e) {
+            Toast.makeText(this, "링크를 열 수 없어요.", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private void addSection(LinearLayout body, String title, boolean archived) {
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -265,7 +309,8 @@ public class MainActivity extends Activity {
 
     private View libraryRow(LibraryItem item, boolean archivedSection) {
         LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.TOP);
         card.setPadding(dp(14), dp(12), dp(14), dp(12));
         boolean selected = deleteSelection.contains(item.id);
         int rowBg = selected ? Color.rgb(74, 18, 27) : PANEL;
@@ -289,17 +334,26 @@ public class MainActivity extends Activity {
         cardLp.setMargins(0, 0, 0, dp(10));
         card.setLayoutParams(cardLp);
 
+        ImageView thumb = thumbnailView(item, dp(74));
+        LinearLayout.LayoutParams thumbLp = new LinearLayout.LayoutParams(dp(74), dp(74));
+        thumbLp.setMargins(0, dp(2), dp(12), 0);
+        card.addView(thumb, thumbLp);
+
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        card.addView(info, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
         TextView title = text(valueOr(item.displayTitle, item.title), 16, Color.WHITE, Typeface.BOLD);
         title.setSingleLine(false);
-        card.addView(title);
+        info.addView(title);
 
         TextView meta = text(formatDate(item.addedAt) + " · " + valueOr(item.aiName, "AI"), 12, MUTED, Typeface.NORMAL);
         meta.setPadding(0, dp(4), 0, dp(10));
-        card.addView(meta);
+        info.addView(meta);
 
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        card.addView(row);
+        info.addView(row);
 
         if (deleteMode) {
             Button select = smallButton(deleteSelection.contains(item.id) ? "선택됨" : "선택");
@@ -337,12 +391,96 @@ public class MainActivity extends Activity {
         return card;
     }
 
+    private ImageView thumbnailView(LibraryItem item, int size) {
+        ImageView image = new ImageView(this);
+        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        image.setBackground(rounded(PANEL_2, dp(10), RED_DARK, 1));
+        image.setClipToOutline(true);
+        image.setOutlineProvider(new ViewOutlineProvider() {
+            @Override
+            public void getOutline(View view, Outline outline) {
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(10));
+            }
+        });
+        Bitmap custom = loadThumbnailBitmap(item);
+        if (custom != null) {
+            image.setImageBitmap(custom);
+        } else {
+            image.setImageResource(getResources().getIdentifier("ic_launcher", "drawable", getPackageName()));
+        }
+        image.setOnClickListener(v -> {
+            if (deleteMode) {
+                toggleDeleteSelection(item);
+            } else {
+                pickThumbnail(item);
+            }
+        });
+        image.setOnLongClickListener(v -> {
+            pickThumbnail(item);
+            return true;
+        });
+        return image;
+    }
+
     private void showHelpDialog() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        list.setPadding(dp(16), dp(8), dp(16), dp(8));
+        scroll.addView(list);
+        scroll.setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(460)));
+
+        addHelpSection(list, "채팅방 불러오기",
+                "1. 달루비 크랙 이북 메이커 확장 프로그램으로 크랙 채팅을 md 파일로 저장해요.\n"
+                        + "2. 앱 서재에서 채팅방 불러오기를 눌러요.\n"
+                        + "3. {user} 이름과 {char} 이름을 적고 읽기 시작해요.");
+        addHelpSection(list, "서재와 보관함",
+                "채팅방 목록에는 불러온 방이 쌓여요.\n"
+                        + "자주 읽는 방은 보관 버튼이나 채팅방 메뉴에서 보관함으로 이동할 수 있어요.\n"
+                        + "목록에서 길게 누르면 여러 채팅방을 선택해서 삭제할 수 있어요.");
+        addHelpSection(list, "썸네일 바꾸기",
+                "서재 목록의 왼쪽 썸네일을 누르면 이미지를 바꿀 수 있어요.\n"
+                        + "이미지를 고른 뒤 확대, 축소, 상하좌우 버튼으로 정방형 크롭 위치를 맞추고 저장해요.\n"
+                        + "채팅방 안의 점 3개 메뉴에서도 썸네일을 수정할 수 있어요.");
+        addHelpSection(list, "읽기 화면",
+                "이전/다음으로 페이지를 넘기고, 가운데 페이지 숫자를 눌러 원하는 페이지로 이동해요.\n"
+                        + "A-/A+로 글자 크기를 바꿀 수 있고, 읽던 페이지는 채팅방마다 저장돼요.");
+        addHelpSection(list, "북마크",
+                "오른쪽 아래 북마크 버튼을 누르면 문단 선택 모드가 켜져요.\n"
+                        + "원하는 문단 앞의 동그라미를 눌러 북마크하고, 이미 저장된 북마크는 길게 눌러 삭제해요.\n"
+                        + "상단 북마크 버튼에서 저장한 위치로 바로 이동할 수 있어요. 최대 10개까지 저장돼요.");
+
         new AlertDialog.Builder(this)
                 .setTitle("사용법")
-                .setMessage("1. 템퍼몽키에서 크랙 채팅을 md 파일로 저장합니다.\n2. 앱에서 채팅방 불러오기를 누릅니다.\n3. {user} 이름과 {char} 이름을 적고 읽기 시작합니다.\n4. 자주 볼 방은 보관함에 넣어두면 됩니다.")
+                .setView(scroll)
                 .setPositiveButton("확인", null)
                 .show();
+    }
+
+    private void addHelpSection(LinearLayout parent, String title, String body) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(14), dp(12), dp(14), dp(12));
+        box.setBackground(rounded(PANEL, dp(10), Color.rgb(58, 52, 56), 1));
+
+        TextView head = text(title + "  +", 15, TEXT, Typeface.BOLD);
+        box.addView(head);
+
+        TextView detail = text(body, 13, MUTED, Typeface.NORMAL);
+        detail.setPadding(0, dp(8), 0, 0);
+        detail.setLineSpacing(dp(3), 1.0f);
+        detail.setVisibility(View.GONE);
+        box.addView(detail);
+
+        box.setOnClickListener(v -> {
+            boolean open = detail.getVisibility() != View.VISIBLE;
+            detail.setVisibility(open ? View.VISIBLE : View.GONE);
+            head.setText(title + (open ? "  -" : "  +"));
+        });
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, 0, 0, dp(8));
+        parent.addView(box, lp);
     }
 
     private void toggleDeleteSelection(LibraryItem item) {
@@ -400,6 +538,168 @@ public class MainActivity extends Activity {
         startActivityForResult(intent, REQ_OPEN_MD);
     }
 
+    private void pickThumbnail(LibraryItem item) {
+        if (item == null) return;
+        pendingThumbnailItem = item;
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+        startActivityForResult(intent, REQ_PICK_THUMBNAIL);
+    }
+
+    private void loadThumbnailForCrop(Uri uri) {
+        try {
+            cropSourceBitmap = decodeBitmapFromUri(uri, 1800);
+            if (cropSourceBitmap == null) throw new IOException("bitmap is null");
+            int side = Math.min(cropSourceBitmap.getWidth(), cropSourceBitmap.getHeight());
+            cropSize = side;
+            cropX = (cropSourceBitmap.getWidth() - side) / 2;
+            cropY = (cropSourceBitmap.getHeight() - side) / 2;
+            showThumbnailCropDialog();
+        } catch (Exception e) {
+            Toast.makeText(this, "이미지를 열 수 없어요: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private Bitmap decodeBitmapFromUri(Uri uri, int targetMax) throws IOException {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        InputStream first = getContentResolver().openInputStream(uri);
+        if (first == null) throw new IOException("stream is null");
+        BitmapFactory.decodeStream(first, null, bounds);
+        first.close();
+
+        int sample = 1;
+        int max = Math.max(bounds.outWidth, bounds.outHeight);
+        while (max / sample > targetMax * 2) sample *= 2;
+
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inSampleSize = sample;
+        InputStream second = getContentResolver().openInputStream(uri);
+        if (second == null) throw new IOException("stream is null");
+        Bitmap bitmap = BitmapFactory.decodeStream(second, null, opts);
+        second.close();
+        return bitmap;
+    }
+
+    private void showThumbnailCropDialog() {
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(16), dp(8), dp(16), 0);
+
+        cropPreview = new ImageView(this);
+        cropPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        cropPreview.setBackground(rounded(PANEL, dp(10), Color.rgb(58, 52, 56), 1));
+        form.addView(cropPreview, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(260)));
+
+        TextView hint = text("정방형으로 들어갈 부분을 맞춰줘.", 13, MUTED, Typeface.BOLD);
+        hint.setPadding(0, dp(10), 0, dp(8));
+        form.addView(hint);
+
+        LinearLayout zoomRow = new LinearLayout(this);
+        zoomRow.setOrientation(LinearLayout.HORIZONTAL);
+        form.addView(zoomRow);
+        Button zoomIn = secondaryButton("확대");
+        zoomIn.setOnClickListener(v -> resizeCrop(0.86f));
+        zoomRow.addView(zoomIn, new LinearLayout.LayoutParams(0, dp(42), 1));
+        Button zoomOut = secondaryButton("축소");
+        zoomOut.setOnClickListener(v -> resizeCrop(1.16f));
+        LinearLayout.LayoutParams zoomOutLp = new LinearLayout.LayoutParams(0, dp(42), 1);
+        zoomOutLp.setMargins(dp(8), 0, 0, 0);
+        zoomRow.addView(zoomOut, zoomOutLp);
+
+        LinearLayout moveRow = new LinearLayout(this);
+        moveRow.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams moveRowLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        moveRowLp.setMargins(0, dp(8), 0, 0);
+        form.addView(moveRow, moveRowLp);
+        addMoveButton(moveRow, "←", -1, 0);
+        addMoveButton(moveRow, "↑", 0, -1);
+        addMoveButton(moveRow, "↓", 0, 1);
+        addMoveButton(moveRow, "→", 1, 0);
+
+        updateCropPreview();
+
+        new AlertDialog.Builder(this)
+                .setTitle("썸네일 크롭")
+                .setView(form)
+                .setPositiveButton("저장", (dialog, which) -> saveCroppedThumbnail())
+                .setNegativeButton("취소", null)
+                .show();
+    }
+
+    private void addMoveButton(LinearLayout parent, String label, int dx, int dy) {
+        Button button = secondaryButton(label);
+        button.setTextSize(18);
+        button.setOnClickListener(v -> moveCrop(dx, dy));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(42), 1);
+        if (parent.getChildCount() > 0) lp.setMargins(dp(8), 0, 0, 0);
+        parent.addView(button, lp);
+    }
+
+    private void resizeCrop(float factor) {
+        if (cropSourceBitmap == null) return;
+        int oldSize = cropSize;
+        int centerX = cropX + oldSize / 2;
+        int centerY = cropY + oldSize / 2;
+        int minSide = Math.min(cropSourceBitmap.getWidth(), cropSourceBitmap.getHeight());
+        cropSize = Math.max(dp(80), Math.min(minSide, Math.round(cropSize * factor)));
+        cropX = centerX - cropSize / 2;
+        cropY = centerY - cropSize / 2;
+        clampCrop();
+        updateCropPreview();
+    }
+
+    private void moveCrop(int dx, int dy) {
+        if (cropSourceBitmap == null) return;
+        int step = Math.max(8, cropSize / 8);
+        cropX += dx * step;
+        cropY += dy * step;
+        clampCrop();
+        updateCropPreview();
+    }
+
+    private void clampCrop() {
+        if (cropSourceBitmap == null) return;
+        cropSize = Math.max(1, Math.min(cropSize, Math.min(cropSourceBitmap.getWidth(), cropSourceBitmap.getHeight())));
+        cropX = Math.max(0, Math.min(cropX, cropSourceBitmap.getWidth() - cropSize));
+        cropY = Math.max(0, Math.min(cropY, cropSourceBitmap.getHeight() - cropSize));
+    }
+
+    private void updateCropPreview() {
+        if (cropPreview == null || cropSourceBitmap == null) return;
+        try {
+            clampCrop();
+            Bitmap cropped = Bitmap.createBitmap(cropSourceBitmap, cropX, cropY, cropSize, cropSize);
+            cropPreview.setImageBitmap(cropped);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void saveCroppedThumbnail() {
+        if (pendingThumbnailItem == null || cropSourceBitmap == null) return;
+        try {
+            clampCrop();
+            Bitmap cropped = Bitmap.createBitmap(cropSourceBitmap, cropX, cropY, cropSize, cropSize);
+            Bitmap square = Bitmap.createScaledBitmap(cropped, 512, 512, true);
+            File dir = new File(getFilesDir(), "thumbnails");
+            if (!dir.exists()) dir.mkdirs();
+            File file = new File(dir, pendingThumbnailItem.id + ".jpg");
+            FileOutputStream out = new FileOutputStream(file);
+            square.compress(Bitmap.CompressFormat.JPEG, 90, out);
+            out.flush();
+            out.close();
+            pendingThumbnailItem.thumbnailPath = file.getAbsolutePath();
+            saveLibrary();
+            Toast.makeText(this, "썸네일을 저장했어요.", Toast.LENGTH_SHORT).show();
+            if (activeItem == null) {
+                showHome();
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, "썸네일 저장 실패: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
@@ -410,6 +710,13 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) {
             }
             loadNewDocument(currentUri);
+        } else if (requestCode == REQ_PICK_THUMBNAIL && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            Uri uri = data.getData();
+            try {
+                getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (Exception ignored) {
+            }
+            loadThumbnailForCrop(uri);
         }
     }
 
@@ -494,7 +801,9 @@ public class MainActivity extends Activity {
         pageContainer = new LinearLayout(this);
         pageContainer.setOrientation(LinearLayout.VERTICAL);
         pageContainer.setPadding(dp(18), dp(16), dp(18), dp(80));
-        scrollView.addView(pageContainer);
+        ScrollView.LayoutParams pageLp = new ScrollView.LayoutParams(contentMaxWidth(), ViewGroup.LayoutParams.WRAP_CONTENT);
+        pageLp.gravity = Gravity.CENTER_HORIZONTAL;
+        scrollView.addView(pageContainer, pageLp);
         readerFrame.addView(scrollView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         addFloatButtons();
         shell.addView(readerFrame, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
@@ -1130,6 +1439,10 @@ public class MainActivity extends Activity {
             dialog.dismiss();
             showRenameDialog(activeItem, true);
         });
+        addMenuRow(menu, "썸네일 수정", "서재 목록에 보이는 정방형 이미지를 바꿔요.", () -> {
+            dialog.dismiss();
+            pickThumbnail(activeItem);
+        });
         addMenuRow(menu, "{user}/{char} 수정", "유저 이름과 캐릭터/작품 이름을 바꿔요.", () -> {
             dialog.dismiss();
             showSpeakerDialog();
@@ -1294,6 +1607,19 @@ public class MainActivity extends Activity {
         prefs.edit().putString(PREF_LIBRARY, arr.toString()).apply();
     }
 
+    private Bitmap loadThumbnailBitmap(LibraryItem item) {
+        if (item == null || item.thumbnailPath == null || item.thumbnailPath.trim().isEmpty()) return null;
+        try {
+            File file = new File(item.thumbnailPath);
+            if (!file.exists()) return null;
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inSampleSize = 2;
+            return BitmapFactory.decodeFile(file.getAbsolutePath(), opts);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private String readAll(Uri uri) throws IOException {
         InputStream stream = getContentResolver().openInputStream(uri);
         if (stream == null) throw new IOException("stream is null");
@@ -1439,6 +1765,16 @@ public class MainActivity extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
+    private int contentMaxWidth() {
+        return Math.min(getResources().getDisplayMetrics().widthPixels, dp(720));
+    }
+
+    private LinearLayout.LayoutParams centeredContentParams() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(contentMaxWidth(), ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.gravity = Gravity.CENTER_HORIZONTAL;
+        return lp;
+    }
+
     private String join(List<String> lines) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < lines.size(); i++) {
@@ -1542,6 +1878,7 @@ public class MainActivity extends Activity {
         String displayTitle = "";
         String userName = "유저";
         String aiName = "AI";
+        String thumbnailPath = "";
         long addedAt = System.currentTimeMillis();
         int lastPage = 0;
         boolean archived = false;
@@ -1557,6 +1894,7 @@ public class MainActivity extends Activity {
                 obj.put("displayTitle", displayTitle);
                 obj.put("userName", userName);
                 obj.put("aiName", aiName);
+                obj.put("thumbnailPath", thumbnailPath);
                 obj.put("addedAt", addedAt);
                 obj.put("lastPage", lastPage);
                 obj.put("archived", archived);
@@ -1577,6 +1915,7 @@ public class MainActivity extends Activity {
             item.displayTitle = obj.optString("displayTitle", item.title);
             item.userName = obj.optString("userName", "유저");
             item.aiName = obj.optString("aiName", "AI");
+            item.thumbnailPath = obj.optString("thumbnailPath", "");
             item.addedAt = obj.optLong("addedAt", System.currentTimeMillis());
             item.lastPage = obj.optInt("lastPage", 0);
             item.archived = obj.optBoolean("archived", false);
