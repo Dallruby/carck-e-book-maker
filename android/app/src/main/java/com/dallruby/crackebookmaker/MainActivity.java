@@ -101,6 +101,7 @@ public class MainActivity extends Activity {
     private float textScale = 1.0f;
     private boolean deleteMode = false;
     private boolean lightTheme = false;
+    private boolean bookmarkPickMode = false;
     private Uri currentUri;
     private String pendingBookmarkKey = "";
 
@@ -186,7 +187,7 @@ public class MainActivity extends Activity {
 
         Button delete = primaryButton(String.format(Locale.KOREA, "선택 삭제 %d", deleteSelection.size()));
         delete.setOnClickListener(v -> deleteSelectedItems());
-        bar.addView(delete, new LinearLayout.LayoutParams(0, dp(44), 1));
+        bar.addView(delete, new LinearLayout.LayoutParams(0, dp(50), 1));
 
         Button cancel = secondaryButton("취소");
         cancel.setOnClickListener(v -> {
@@ -194,8 +195,8 @@ public class MainActivity extends Activity {
             deleteSelection.clear();
             showHome();
         });
-        LinearLayout.LayoutParams cancelLp = new LinearLayout.LayoutParams(dp(86), dp(44));
-        cancelLp.setMargins(dp(8), 0, 0, 0);
+        LinearLayout.LayoutParams cancelLp = new LinearLayout.LayoutParams(dp(92), dp(50));
+        cancelLp.setMargins(dp(10), 0, 0, 0);
         bar.addView(cancel, cancelLp);
     }
 
@@ -265,7 +266,10 @@ public class MainActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(14), dp(12), dp(14), dp(12));
-        card.setBackground(rounded(PANEL, dp(12), archivedSection ? RED_DARK : Color.rgb(48, 45, 47), 1));
+        boolean selected = deleteSelection.contains(item.id);
+        int rowBg = selected ? Color.rgb(74, 18, 27) : PANEL;
+        int rowStroke = selected ? RED : (archivedSection ? RED_DARK : Color.rgb(48, 45, 47));
+        card.setBackground(rounded(rowBg, dp(12), rowStroke, selected ? 2 : 1));
         card.setOnClickListener(v -> {
             if (deleteMode) {
                 toggleDeleteSelection(item);
@@ -600,7 +604,11 @@ public class MainActivity extends Activity {
 
         Button mark = roundFloatButton("🔖");
         mark.setTextSize(17);
-        mark.setOnClickListener(v -> addBookmarkForVisibleText());
+        mark.setOnClickListener(v -> {
+            bookmarkPickMode = !bookmarkPickMode;
+            Toast.makeText(this, bookmarkPickMode ? "북마크할 문단을 골라줘." : "북마크 선택 모드 종료", Toast.LENGTH_SHORT).show();
+            renderPage();
+        });
         floating.addView(mark, new LinearLayout.LayoutParams(dp(46), dp(46)));
 
         Button up = roundFloatButton("↑");
@@ -648,7 +656,7 @@ public class MainActivity extends Activity {
         String pageText = String.format(Locale.KOREA, "%d / %d 페이지", currentPage + 1, total);
         pageView.setText(pageText);
         pageJumpButton.setText(String.format(Locale.KOREA, "%d / %d", currentPage + 1, total));
-        bookmarkButton.setText(String.format(Locale.KOREA, "북마크 %d", activeItem == null ? 0 : activeItem.bookmarks.size()));
+        bookmarkButton.setText(String.format(Locale.KOREA, "북마크 %d/10", activeItem == null ? 0 : activeItem.bookmarks.size()));
         renderedAnchors.clear();
 
         if (pages.isEmpty()) {
@@ -761,13 +769,48 @@ public class MainActivity extends Activity {
         paragraph.clear();
         if (value.isEmpty()) return false;
 
-        TextView tv = text("", 16, role == Role.USER ? Color.WHITE : TEXT, role == Role.USER ? Typeface.BOLD : Typeface.NORMAL);
         String key = bookmarkKey(currentPage, blockIndex, paragraphIndex, value);
         boolean marked = hasBookmarkKey(key);
+        TextView tv = text("", 16, role == Role.USER ? Color.WHITE : TEXT, role == Role.USER ? Typeface.BOLD : Typeface.NORMAL);
         tv.setText(applyInlineMarkdown(marked ? "🔖 " + value : value));
         tv.setLineSpacing(dp(4), 1.05f);
         tv.setPadding(0, 0, 0, dp(14));
-        pageContainer.addView(tv);
+        if (marked) {
+            tv.setOnLongClickListener(v -> {
+                confirmDeleteBookmark(key);
+                return true;
+            });
+        }
+
+        if (bookmarkPickMode) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.TOP);
+            pageContainer.addView(row, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            Button pick = smallCircleButton(marked ? "✓" : "○");
+            pick.setOnClickListener(v -> {
+                if (hasBookmarkKey(key)) {
+                    Toast.makeText(this, "이미 북마크된 문단이에요. 길게 누르면 삭제할 수 있어요.", Toast.LENGTH_SHORT).show();
+                } else {
+                    addBookmarkAt(key, currentPage, value);
+                }
+            });
+            pick.setOnLongClickListener(v -> {
+                if (hasBookmarkKey(key)) {
+                    confirmDeleteBookmark(key);
+                    return true;
+                }
+                return false;
+            });
+            LinearLayout.LayoutParams pickLp = new LinearLayout.LayoutParams(dp(38), dp(38));
+            pickLp.setMargins(0, 0, dp(8), 0);
+            row.addView(pick, pickLp);
+
+            row.addView(tv, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        } else {
+            pageContainer.addView(tv);
+        }
         renderedAnchors.add(new ParagraphAnchor(key, currentPage, tv, previewText(value)));
         return true;
     }
@@ -917,18 +960,20 @@ public class MainActivity extends Activity {
                 .show();
     }
 
-    private void addBookmarkForVisibleText() {
-        if (activeItem == null || renderedAnchors.isEmpty()) return;
-        ParagraphAnchor anchor = firstVisibleAnchor();
-        if (anchor == null) anchor = renderedAnchors.get(0);
-        if (hasBookmarkKey(anchor.key)) {
-            Toast.makeText(this, "이미 북마크된 위치예요.", Toast.LENGTH_SHORT).show();
+    private void addBookmarkAt(String key, int page, String value) {
+        if (activeItem == null) return;
+        if (activeItem.bookmarks.size() >= 10) {
+            Toast.makeText(this, "북마크는 최대 10개까지 저장할 수 있어요.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (hasBookmarkKey(key)) {
+            Toast.makeText(this, "이미 북마크된 문단이에요.", Toast.LENGTH_SHORT).show();
             return;
         }
         BookmarkItem item = new BookmarkItem();
-        item.page = anchor.page;
-        item.key = anchor.key;
-        item.preview = anchor.preview;
+        item.page = page;
+        item.key = key;
+        item.preview = previewText(value);
         item.createdAt = System.currentTimeMillis();
         activeItem.bookmarks.add(item);
         sortBookmarks(activeItem.bookmarks);
@@ -937,14 +982,19 @@ public class MainActivity extends Activity {
         renderPage();
     }
 
-    private ParagraphAnchor firstVisibleAnchor() {
-        int scrollY = scrollView.getScrollY();
-        for (ParagraphAnchor anchor : renderedAnchors) {
-            if (anchor.view.getBottom() >= scrollY + dp(8)) {
-                return anchor;
-            }
-        }
-        return renderedAnchors.isEmpty() ? null : renderedAnchors.get(renderedAnchors.size() - 1);
+    private void confirmDeleteBookmark(String key) {
+        BookmarkItem target = findBookmark(key);
+        if (target == null) return;
+        new AlertDialog.Builder(this)
+                .setTitle("북마크 삭제")
+                .setMessage(bookmarkLabel(target) + " 북마크를 삭제할까요?")
+                .setPositiveButton("삭제", (dialog, which) -> {
+                    activeItem.bookmarks.remove(target);
+                    saveLibrary();
+                    renderPage();
+                })
+                .setNegativeButton("취소", null)
+                .show();
     }
 
     private void showBookmarkDialog() {
@@ -953,14 +1003,29 @@ public class MainActivity extends Activity {
             return;
         }
         sortBookmarks(activeItem.bookmarks);
-        String[] labels = new String[activeItem.bookmarks.size()];
-        for (int i = 0; i < activeItem.bookmarks.size(); i++) {
-            BookmarkItem item = activeItem.bookmarks.get(i);
-            labels[i] = bookmarkLabel(item) + "  " + valueOr(item.preview, "북마크");
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        list.setPadding(dp(16), dp(8), dp(16), dp(8));
+        scroll.addView(list);
+        scroll.setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(420)));
+
+        for (BookmarkItem item : activeItem.bookmarks) {
+            TextView row = text(bookmarkLabel(item) + " (" + valueOr(item.preview, "북마크") + ")", 15, TEXT, Typeface.BOLD);
+            row.setPadding(dp(14), dp(12), dp(14), dp(12));
+            row.setBackground(rounded(PANEL, dp(10), Color.rgb(58, 52, 56), 1));
+            row.setOnClickListener(v -> goToBookmark(item));
+            row.setOnLongClickListener(v -> {
+                confirmDeleteBookmark(item.key);
+                return true;
+            });
+            LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            rowLp.setMargins(0, 0, 0, dp(8));
+            list.addView(row, rowLp);
         }
         new AlertDialog.Builder(this)
                 .setTitle("북마크")
-                .setItems(labels, (dialog, which) -> goToBookmark(activeItem.bookmarks.get(which)))
+                .setView(scroll)
                 .setNegativeButton("닫기", null)
                 .show();
     }
@@ -985,6 +1050,14 @@ public class MainActivity extends Activity {
         return null;
     }
 
+    private BookmarkItem findBookmark(String key) {
+        if (activeItem == null) return null;
+        for (BookmarkItem item : activeItem.bookmarks) {
+            if (item.key.equals(key)) return item;
+        }
+        return null;
+    }
+
     private String bookmarkLabel(BookmarkItem item) {
         int count = 0;
         for (BookmarkItem other : activeItem.bookmarks) {
@@ -1003,15 +1076,25 @@ public class MainActivity extends Activity {
 
     private void showRenameDialog(LibraryItem item, boolean fromReader) {
         if (item == null) return;
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(18), dp(8), dp(18), 0);
+
+        TextView label = text("새 채팅방 이름", 13, MUTED, Typeface.BOLD);
+        form.addView(label);
+
         EditText input = new EditText(this);
         input.setSingleLine(true);
         input.setText(valueOr(item.displayTitle, item.title));
         input.setSelection(input.getText().length());
-        input.setPadding(dp(18), 0, dp(18), 0);
+        input.setPadding(0, dp(4), 0, dp(4));
+        LinearLayout.LayoutParams inputLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        inputLp.setMargins(0, dp(8), 0, 0);
+        form.addView(input, inputLp);
 
         new AlertDialog.Builder(this)
                 .setTitle("채팅방 이름 변경")
-                .setView(input)
+                .setView(form)
                 .setPositiveButton("저장", (dialog, which) -> {
                     item.displayTitle = valueOr(input.getText().toString(), item.title);
                     saveLibrary();
@@ -1027,25 +1110,55 @@ public class MainActivity extends Activity {
 
     private void showChatMenu() {
         if (activeItem == null) return;
-        String archiveLabel = activeItem.archived ? "보관함에서 꺼내기" : "보관함 이동";
-        String themeLabel = lightTheme ? "다크모드로 변경" : "라이트모드로 변경";
-        String[] items = new String[]{
-                "채팅방 이름 변경",
-                "{user}/{char} 수정",
-                archiveLabel,
-                themeLabel,
-                "채팅방 삭제"
-        };
-        new AlertDialog.Builder(this)
+        LinearLayout menu = new LinearLayout(this);
+        menu.setOrientation(LinearLayout.VERTICAL);
+        menu.setPadding(dp(16), dp(6), dp(16), dp(8));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("채팅방 메뉴")
-                .setItems(items, (dialog, which) -> {
-                    if (which == 0) showRenameDialog(activeItem, true);
-                    if (which == 1) showSpeakerDialog();
-                    if (which == 2) toggleArchiveForActive();
-                    if (which == 3) toggleThemeForActive();
-                    if (which == 4) confirmDeleteActiveItem();
-                })
-                .show();
+                .setView(menu)
+                .create();
+
+        addMenuRow(menu, "채팅방 이름 변경", "목록과 상단에 보이는 제목을 바꿔요.", () -> {
+            dialog.dismiss();
+            showRenameDialog(activeItem, true);
+        });
+        addMenuRow(menu, "{user}/{char} 수정", "유저 이름과 캐릭터/작품 이름을 바꿔요.", () -> {
+            dialog.dismiss();
+            showSpeakerDialog();
+        });
+        addMenuRow(menu, activeItem.archived ? "보관함에서 꺼내기" : "보관함 이동", "자주 읽는 채팅방을 보관함에 따로 모아요.", () -> {
+            dialog.dismiss();
+            toggleArchiveForActive();
+        });
+        addMenuRow(menu, lightTheme ? "다크모드로 변경" : "라이트모드로 변경", "읽기 화면 색상을 바꿔요.", () -> {
+            dialog.dismiss();
+            toggleThemeForActive();
+        });
+        addMenuRow(menu, "채팅방 삭제", "이 앱의 채팅방 목록에서 삭제해요.", () -> {
+            dialog.dismiss();
+            confirmDeleteActiveItem();
+        });
+
+        dialog.show();
+    }
+
+    private void addMenuRow(LinearLayout parent, String title, String sub, Runnable action) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(dp(14), dp(10), dp(14), dp(10));
+        row.setBackground(rounded(PANEL, dp(10), Color.rgb(58, 52, 56), 1));
+        row.setOnClickListener(v -> action.run());
+
+        TextView titleView = text(title, 15, TEXT, Typeface.BOLD);
+        row.addView(titleView);
+        TextView subView = text(sub, 12, MUTED, Typeface.NORMAL);
+        subView.setPadding(0, dp(3), 0, 0);
+        row.addView(subView);
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, 0, 0, dp(8));
+        parent.addView(row, lp);
     }
 
     private void showSpeakerDialog() {
@@ -1207,11 +1320,14 @@ public class MainActivity extends Activity {
         if (color == LINE || color == Color.rgb(56, 54, 55) || color == Color.rgb(48, 48, 48)) {
             return Color.rgb(220, 211, 215);
         }
-        if (color == TEXT || color == Color.WHITE || color == Color.rgb(232, 232, 232) || color == Color.rgb(230, 230, 230)) {
+        if (color == TEXT || color == Color.WHITE || color == Color.rgb(232, 232, 232) || color == Color.rgb(230, 230, 230) || color == Color.rgb(238, 238, 238) || color == Color.rgb(235, 235, 235)) {
             return Color.rgb(38, 34, 36);
         }
-        if (color == MUTED || color == Color.rgb(166, 161, 164) || color == Color.rgb(161, 161, 161)) {
+        if (color == MUTED || color == Color.rgb(166, 161, 164) || color == Color.rgb(161, 161, 161) || color == Color.rgb(190, 190, 190)) {
             return Color.rgb(116, 102, 108);
+        }
+        if (color == Color.rgb(255, 211, 216)) {
+            return Color.rgb(128, 42, 61);
         }
         if (color == SOFT || color == Color.rgb(210, 176, 182)) {
             return Color.rgb(139, 61, 76);
@@ -1248,7 +1364,7 @@ public class MainActivity extends Activity {
     private Button secondaryButton(String label) {
         Button b = new Button(this);
         b.setText(label);
-        b.setTextColor(Color.WHITE);
+        b.setTextColor(themed(Color.WHITE));
         b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         b.setAllCaps(false);
         b.setBackground(rounded(Color.rgb(42, 42, 46), dp(10), Color.TRANSPARENT, 0));
@@ -1277,6 +1393,18 @@ public class MainActivity extends Activity {
     private Button iconButton(String label) {
         Button b = ghostButton(label);
         b.setBackground(rounded(PANEL_2, dp(10), Color.rgb(55, 52, 55), 1));
+        return b;
+    }
+
+    private Button smallCircleButton(String label) {
+        Button b = new Button(this);
+        b.setText(label);
+        b.setTextColor(themed(label.equals("✓") ? RED : MUTED));
+        b.setTextSize(18);
+        b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        b.setAllCaps(false);
+        b.setPadding(0, 0, 0, dp(2));
+        b.setBackground(rounded(PANEL_2, dp(19), label.equals("✓") ? RED : Color.rgb(70, 64, 68), 1));
         return b;
     }
 
@@ -1336,7 +1464,7 @@ public class MainActivity extends Activity {
 
     private String previewText(String text) {
         String normalized = text == null ? "" : text.replaceAll("\\s+", " ").trim();
-        if (normalized.length() > 28) return normalized.substring(0, 28);
+        if (normalized.length() > 15) return normalized.substring(0, 15);
         return normalized;
     }
 
