@@ -23,6 +23,7 @@ import android.util.LruCache;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.view.ViewOutlineProvider;
 import android.widget.Button;
 import android.widget.EditText;
@@ -865,7 +866,12 @@ public class MainActivity extends Activity {
     private View readerControls() {
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.HORIZONTAL);
-        controls.setPadding(dp(10), dp(8), dp(10), dp(10));
+        int left = dp(10);
+        int top = dp(8);
+        int right = dp(10);
+        int bottom = dp(10);
+        controls.setPadding(left, top, right, bottom);
+        applyBottomInsetPadding(controls, left, top, right, bottom);
         controls.setGravity(Gravity.CENTER_VERTICAL);
         controls.setBackgroundColor(themed(Color.rgb(19, 19, 20)));
 
@@ -898,6 +904,15 @@ public class MainActivity extends Activity {
         controls.addView(nextButton, nLp);
 
         return controls;
+    }
+
+    private void applyBottomInsetPadding(View view, int left, int top, int right, int bottom) {
+        view.setOnApplyWindowInsetsListener((v, insets) -> {
+            int safeBottom = Math.max(0, insets.getSystemWindowInsetBottom());
+            v.setPadding(left, top, right, bottom + safeBottom);
+            return insets;
+        });
+        view.requestApplyInsets();
     }
 
     private void addFloatButtons() {
